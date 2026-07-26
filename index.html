@@ -22,6 +22,7 @@
       height: 100%;
       object-fit: cover;
       display: block;
+      background: #111;
     }
     #guideBox {
       position: absolute;
@@ -32,6 +33,7 @@
       left: 10%;
       width: 80%;
       height: 24%;
+      display: none;
     }
     #tapMarker {
       position: absolute;
@@ -67,6 +69,20 @@
       border-radius: 6px;
       padding: 8px 14px;
       font-size: 13px;
+    }
+    #startCameraBtn {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 20;
+      padding: 16px 26px;
+      font-size: 16px;
+      font-weight: bold;
+      background: #1a73e8;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.4);
     }
     #status {
       position: absolute;
@@ -127,6 +143,8 @@
     <div id="tapMarker"></div>
   </div>
 
+  <button id="startCameraBtn">Tap to Start Camera</button>
+
   <div class="topbar">
     <span>Tap directly on the barcode</span>
     <button id="cancelBtn">Cancel</button>
@@ -146,7 +164,7 @@
     <button id="manualBtn">Use</button>
   </div>
 
-  <div id="status">Starting camera...</div>
+  <div id="status">Tap "Start Camera" to begin</div>
 
   <!-- Not attached to DOM visibly - html5-qrcode needs a target element id -->
   <div id="reader" style="display:none;"></div>
@@ -160,6 +178,7 @@
     var confirmBox = document.getElementById('confirmBox');
     var confirmValue = document.getElementById('confirmValue');
     var manualRow = document.getElementById('manualRow');
+    var startBtn = document.getElementById('startCameraBtn');
 
     var stream = null;
     var track = null;
@@ -167,23 +186,76 @@
     var sent = false;
     var busy = false; // prevents overlapping tap attempts
     var tesseractLoadPromise = null;
+    var cameraTimeoutId = null;
 
-    // ---------- Camera setup ----------
-    navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'environment',
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
+    // ---------- Pre-flight checks (run immediately, before any tap) ----------
+    function preflightCheck() {
+      // Secure context check - getUserMedia silently fails/hangs on some
+      // browsers if the page isn't served over HTTPS (or localhost).
+      if (!window.isSecureContext) {
+        statusEl.textContent = 'This page must be loaded over HTTPS for camera access to work.';
+        startBtn.style.display = 'none';
+        manualRow.style.display = 'flex';
+        return false;
       }
-    }).then(function (s) {
-      stream = s;
-      track = stream.getVideoTracks()[0];
-      video.srcObject = stream;
-      statusEl.textContent = 'Tap directly on the barcode';
-    }).catch(function (err) {
-      statusEl.textContent = 'Camera unavailable. Type the code below instead.';
-      manualRow.style.display = 'flex';
-    });
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        statusEl.textContent = 'This browser does not support camera access. Try Chrome, or type the code below.';
+        startBtn.style.display = 'none';
+        manualRow.style.display = 'flex';
+        return false;
+      }
+      return true;
+    }
+    var preflightOk = preflightCheck();
+
+    // ---------- Camera start (tied to a real tap - required by some browsers) ----------
+    startBtn.addEventListener('click', startCamera);
+
+    function startCamera() {
+      if (!preflightOk) return;
+      startBtn.style.display = 'none';
+      statusEl.textContent = 'Requesting camera access...';
+
+      // Safety net: if getUserMedia neither resolves nor rejects within
+      // 8 seconds (seen on some OEM/in-app browsers), stop waiting and
+      // offer a way forward instead of hanging forever.
+      cameraTimeoutId = setTimeout(function () {
+        statusEl.textContent = 'Camera is taking too long to respond on this browser. Try Chrome/Safari, or type the code below.';
+        manualRow.style.display = 'flex';
+        startBtn.style.display = 'block';
+        startBtn.textContent = 'Try Again';
+      }, 8000);
+
+      navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      }).then(function (s) {
+        clearTimeout(cameraTimeoutId);
+        stream = s;
+        track = stream.getVideoTracks()[0];
+        video.srcObject = stream;
+        guideBox.style.display = 'block';
+        statusEl.textContent = 'Tap directly on the barcode';
+      }).catch(function (err) {
+        clearTimeout(cameraTimeoutId);
+        var reason = (err && err.name) ? err.name : 'unknown error';
+        var friendly = 'Camera error (' + reason + ').';
+        if (reason === 'NotAllowedError') {
+          friendly = 'Camera permission was denied. Check the site permissions (tap the icon next to the address bar) and allow camera access.';
+        } else if (reason === 'NotFoundError') {
+          friendly = 'No camera was found on this device.';
+        } else if (reason === 'NotReadableError') {
+          friendly = 'Camera is already in use by another app. Close other camera apps and try again.';
+        }
+        statusEl.textContent = friendly + ' You can type the code below instead.';
+        manualRow.style.display = 'flex';
+        startBtn.style.display = 'block';
+        startBtn.textContent = 'Try Again';
+      });
+    }
 
     // ---------- Tap-to-scan ----------
     video.addEventListener('click', onTap);
@@ -198,7 +270,7 @@
     }
 
     function handleTapAt(clientX, clientY) {
-      if (busy || sent || !video.videoWidth) return;
+      if (busy || sent || !stream || !video.videoWidth) return;
       busy = true;
 
       var rect = video.getBoundingClientRect();
@@ -208,13 +280,10 @@
       tapMarker.style.left = tapX + 'px';
       tapMarker.style.top = tapY + 'px';
       tapMarker.style.display = 'block';
-      // restart the pulse animation
       tapMarker.style.animation = 'none';
       void tapMarker.offsetWidth;
       tapMarker.style.animation = 'pulse 0.6s ease-out';
 
-      // Convert tapped client coords -> actual video pixel coords,
-      // accounting for object-fit: cover cropping/scaling.
       var scale = Math.max(rect.width / video.videoWidth, rect.height / video.videoHeight);
       var displayedW = video.videoWidth * scale;
       var displayedH = video.videoHeight * scale;
@@ -223,10 +292,8 @@
       var videoX = (tapX + offsetX) / scale;
       var videoY = (tapY + offsetY) / scale;
 
-      // Best-effort tap-to-focus. Support varies by device; ignored if unavailable.
       tryFocusAt(videoX / video.videoWidth, videoY / video.videoHeight);
 
-      // Crop box centered on tap: wide box to fit a barcode + its printed digits.
       var cropW = Math.min(video.videoWidth * 0.55, video.videoWidth);
       var cropH = Math.min(video.videoHeight * 0.30, video.videoHeight);
       var cropX = clamp(videoX - cropW / 2, 0, video.videoWidth - cropW);
@@ -280,8 +347,6 @@
             if (attemptNum + 1 < MAX_BARCODE_ATTEMPTS) {
               setTimeout(function () { attemptDecode(box, attemptNum + 1); }, 350);
             } else {
-              // Barcode decode failed after a few tries - fall back to OCR
-              // on the printed digits beneath the barcode.
               statusEl.textContent = 'Trying text recognition...';
               runOcrFallback(box);
             }
@@ -291,8 +356,6 @@
 
     function runOcrFallback(box) {
       loadTesseract().then(function () {
-        // Bias the crop toward the lower portion, where the printed
-        // digit string normally sits directly under the bars.
         var textBox = {
           x: box.x,
           y: box.y + box.h * 0.55,
@@ -303,4 +366,121 @@
 
         Tesseract.recognize(canvas, 'eng', {
           tessedit_char_whitelist: '0123456789'
-        }).then(function
+        }).then(function (result) {
+          var raw = (result && result.data && result.data.text) || '';
+          var candidate = extractValidCode(raw);
+          if (candidate) {
+            offerConfirmation(candidate);
+          } else {
+            giveUpThisTap();
+          }
+        }).catch(function () {
+          giveUpThisTap();
+        });
+      }).catch(function () {
+        giveUpThisTap();
+      });
+    }
+
+    function loadTesseract() {
+      if (typeof Tesseract !== 'undefined') return Promise.resolve();
+      if (tesseractLoadPromise) return tesseractLoadPromise;
+      tesseractLoadPromise = new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = 'https://unpkg.com/tesseract.js@5/dist/tesseract.min.js';
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+      return tesseractLoadPromise;
+    }
+
+    function giveUpThisTap() {
+      busy = false;
+      statusEl.textContent = 'Could not read that spot - try tapping again';
+    }
+
+    // ---------- Digit validation (EAN-13 / UPC-A / EAN-8 check digit) ----------
+    function isValidEAN13(code) {
+      if (!/^\d{13}$/.test(code)) return false;
+      var sum = 0;
+      for (var i = 0; i < 12; i++) sum += Number(code[i]) * (i % 2 === 0 ? 1 : 3);
+      return ((10 - (sum % 10)) % 10) === Number(code[12]);
+    }
+    function isValidUPCA(code) {
+      if (!/^\d{12}$/.test(code)) return false;
+      var sum = 0;
+      for (var i = 0; i < 11; i++) sum += Number(code[i]) * (i % 2 === 0 ? 3 : 1);
+      return ((10 - (sum % 10)) % 10) === Number(code[11]);
+    }
+    function isValidEAN8(code) {
+      if (!/^\d{8}$/.test(code)) return false;
+      var sum = 0;
+      for (var i = 0; i < 7; i++) sum += Number(code[i]) * (i % 2 === 0 ? 3 : 1);
+      return ((10 - (sum % 10)) % 10) === Number(code[7]);
+    }
+
+    function extractValidCode(rawText) {
+      var digitRuns = rawText.match(/\d{8,13}/g) || [];
+      for (var i = 0; i < digitRuns.length; i++) {
+        var run = digitRuns[i];
+        var lens = [13, 12, 8];
+        for (var j = 0; j < lens.length; j++) {
+          var len = lens[j];
+          if (run.length < len) continue;
+          for (var start = 0; start + len <= run.length; start++) {
+            var candidate = run.substr(start, len);
+            if (len === 13 && isValidEAN13(candidate)) return candidate;
+            if (len === 12 && isValidUPCA(candidate)) return candidate;
+            if (len === 8 && isValidEAN8(candidate)) return candidate;
+          }
+        }
+      }
+      return null;
+    }
+
+    // ---------- Confirmation UI for OCR results ----------
+    function offerConfirmation(code) {
+      busy = false;
+      statusEl.textContent = '';
+      confirmValue.textContent = code;
+      confirmBox.style.display = 'block';
+
+      document.getElementById('confirmYes').onclick = function () {
+        confirmBox.style.display = 'none';
+        finishSuccess(code);
+      };
+      document.getElementById('confirmNo').onclick = function () {
+        confirmBox.style.display = 'none';
+        statusEl.textContent = 'Tap directly on the barcode';
+      };
+    }
+
+    // ---------- Send result back to opener ----------
+    function finishSuccess(code) {
+      if (sent) return;
+      sent = true;
+      if (window.opener) {
+        window.opener.postMessage({ type: 'barcode-result', code: code }, '*');
+      }
+      stopAndClose();
+    }
+
+    function stopAndClose() {
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      window.close();
+      statusEl.textContent = 'Done. You can close this tab and return to the app.';
+    }
+
+    document.getElementById('cancelBtn').addEventListener('click', function () {
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      window.close();
+    });
+
+    document.getElementById('manualBtn').addEventListener('click', function () {
+      var val = document.getElementById('manualInput').value.trim();
+      if (val) finishSuccess(val);
+    });
+  </script>
+</body>
+</html>
