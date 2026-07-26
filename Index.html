@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Barcode Scanner</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      font-family: Arial, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    #reader { flex: 1; }
+    #reader video { object-fit: cover; }
+    .topbar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      padding: 14px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+      background: linear-gradient(rgba(0,0,0,0.6), transparent);
+    }
+    .topbar span { color: white; font-size: 14px; font-weight: bold; }
+    #cancelBtn {
+      background: rgba(255,255,255,0.15);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.4);
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+    }
+    #status {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      padding: 18px 16px 26px;
+      text-align: center;
+      color: white;
+      font-size: 14px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.7));
+      z-index: 10;
+      min-height: 20px;
+    }
+    #manualRow {
+      display: none;
+      position: absolute;
+      bottom: 60px; left: 16px; right: 16px;
+      z-index: 11;
+      gap: 8px;
+    }
+    #manualRow input {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+    }
+    #manualRow button {
+      padding: 10px 14px;
+      border-radius: 6px;
+      border: none;
+      background: #1a73e8;
+      color: white;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <span>Point camera at barcode</span>
+    <button id="cancelBtn">Cancel</button>
+  </div>
+  <div id="reader"></div>
+  <div id="manualRow">
+    <input type="text" id="manualInput" placeholder="Type code manually">
+    <button id="manualBtn">Use</button>
+  </div>
+  <div id="status">Starting camera...</div>
+
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script>
+    var statusEl = document.getElementById('status');
+    var html5QrCode = new Html5Qrcode('reader');
+    var sent = false;
+
+    function sendResult(code) {
+      if (sent) return;
+      sent = true;
+      if (window.opener) {
+        window.opener.postMessage({ type: 'barcode-result', code: code }, '*');
+      }
+      stopAndClose();
+    }
+
+    function stopAndClose() {
+      html5QrCode.stop().catch(function () {}).then(function () {
+        window.close();
+        // Some mobile browsers block window.close() on tabs not opened
+        // purely by script in certain contexts - show a manual fallback.
+        statusEl.textContent = 'Done. You can close this tab and return to the app.';
+      });
+    }
+
+    function onScanSuccess(decodedText) {
+      sendResult(decodedText.trim());
+    }
+
+    function onScanFailure() {
+      // fires continuously while no code is found - intentionally silent
+    }
+
+    var config = {
+      fps: 10,
+      qrbox: function (viewfinderWidth, viewfinderHeight) {
+        var size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.7);
+        return { width: size, height: Math.floor(size * 0.5) }; // wide box suits 1D barcodes
+      },
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.QR_CODE
+      ]
+    };
+
+    html5QrCode.start({ facingMode: 'environment' }, config, onScanSuccess, onScanFailure)
+      .then(function () {
+        statusEl.textContent = 'Hold the barcode steady inside the box';
+      })
+      .catch(function (err) {
+        statusEl.textContent = 'Camera unavailable. Type the code below instead.';
+        document.getElementById('manualRow').style.display = 'flex';
+      });
+
+    document.getElementById('cancelBtn').addEventListener('click', function () {
+      html5QrCode.stop().catch(function () {}).then(function () { window.close(); });
+    });
+
+    document.getElementById('manualBtn').addEventListener('click', function () {
+      var val = document.getElementById('manualInput').value.trim();
+      if (val) sendResult(val);
+    });
+  </script>
+</body>
+</html>
