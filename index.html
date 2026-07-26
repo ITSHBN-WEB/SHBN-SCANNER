@@ -1,493 +1,327 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Barcode Scanner</title>
+  <base target="_top">
+  <script>
+    // Fire this the instant the page starts parsing - before any CSS or
+    // other scripts load - so the server round-trip starts as early as
+    // physically possible instead of waiting for the rest of the page.
+    var __productData = null, __productErr = null, __dataReady = false;
+    google.script.run
+      .withSuccessHandler(function (products) { __productData = products; __dataReady = true; if (window.__onDataLoaded) window.__onDataLoaded(products); })
+      .withFailureHandler(function (err) { __productErr = err; __dataReady = true; if (window.__onLoadError) window.__onLoadError(err); })
+      .getAllProducts();
+  </script>
   <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
+    body {
       font-family: Arial, sans-serif;
+      max-width: 440px;
+      margin: 0 auto;
+      padding: 24px 16px;
+      background: #f5f7fa;
     }
-    #videoWrap {
-      position: relative;
-      width: 100vw;
-      height: 100vh;
-    }
-    video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
+    h2 { text-align: center; color: #1a1a1a; }
+    label {
       display: block;
-      background: #111;
-    }
-    #guideBox {
-      position: absolute;
-      border: 2px dashed rgba(255,255,255,0.6);
-      border-radius: 8px;
-      pointer-events: none;
-      top: 38%;
-      left: 10%;
-      width: 80%;
-      height: 24%;
-      display: none;
-    }
-    #tapMarker {
-      position: absolute;
-      width: 46px;
-      height: 46px;
-      margin-left: -23px;
-      margin-top: -23px;
-      border: 3px solid #34d058;
-      border-radius: 50%;
-      pointer-events: none;
-      display: none;
-      animation: pulse 0.6s ease-out;
-    }
-    @keyframes pulse {
-      0% { transform: scale(0.6); opacity: 1; }
-      100% { transform: scale(1.3); opacity: 0; }
-    }
-    .topbar {
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      padding: 14px 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      z-index: 10;
-      background: linear-gradient(rgba(0,0,0,0.6), transparent);
-    }
-    .topbar span { color: white; font-size: 13.5px; font-weight: bold; }
-    #cancelBtn {
-      background: rgba(255,255,255,0.15);
-      color: white;
-      border: 1px solid rgba(255,255,255,0.4);
-      border-radius: 6px;
-      padding: 8px 14px;
-      font-size: 13px;
-    }
-    #startCameraBtn {
-      position: absolute;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      z-index: 20;
-      padding: 16px 26px;
-      font-size: 16px;
+      margin-top: 16px;
       font-weight: bold;
+      font-size: 14px;
+      color: #333;
+    }
+    input {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      margin-top: 6px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      box-sizing: border-box;
+    }
+    input:disabled { background: #eee; }
+
+    .code-input-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .code-input-row input { flex: 1; margin-top: 6px; }
+    .scan-tip {
+      font-size: 11.5px;
+      color: #888;
+      margin-top: 6px;
+    }
+    #scanBtn {
+      flex-shrink: 0;
+      margin-top: 6px;
+      padding: 12px 14px;
+      font-size: 14px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
       background: #1a73e8;
       color: white;
+      white-space: nowrap;
+    }
+    #scanBtn:hover { opacity: 0.9; }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    button {
+      flex: 1;
+      padding: 14px;
+      font-size: 16px;
+      font-weight: bold;
       border: none;
-      border-radius: 10px;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+      border-radius: 8px;
+      cursor: pointer;
     }
-    #status {
-      position: absolute;
-      bottom: 0; left: 0; right: 0;
-      padding: 16px 16px 24px;
-      text-align: center;
-      color: white;
-      font-size: 14px;
-      background: linear-gradient(transparent, rgba(0,0,0,0.75));
-      z-index: 10;
-      min-height: 20px;
-    }
-    #confirmBox {
-      display: none;
-      position: absolute;
-      bottom: 90px; left: 16px; right: 16px;
+    #checkBtn { background: #1a73e8; color: white; }
+    #checkBtn:disabled { background: #a0a0a0; }
+    #clearBtn { background: #e0e0e0; color: #333; }
+
+    #result {
+      margin-top: 24px;
       background: white;
       border-radius: 10px;
-      padding: 14px;
-      z-index: 12;
-      text-align: center;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.4);
-    }
-    #confirmBox .label { font-size: 11px; color: #888; text-transform: uppercase; }
-    #confirmBox .value { font-size: 20px; font-weight: bold; color: #1a1a1a; margin: 4px 0 12px; }
-    #confirmBox .row { display: flex; gap: 8px; }
-    #confirmBox button { flex: 1; padding: 10px; border: none; border-radius: 6px; font-weight: bold; font-size: 14px; }
-    #confirmYes { background: #1a73e8; color: white; }
-    #confirmNo { background: #eee; color: #333; }
-    #manualRow {
+      padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
       display: none;
-      position: absolute;
-      bottom: 60px; left: 16px; right: 16px;
-      z-index: 11;
-      gap: 8px;
     }
-    #manualRow input {
-      flex: 1;
-      padding: 10px;
-      font-size: 16px;
-      border-radius: 6px;
-      border: none;
+    .field { margin-bottom: 12px; }
+    .field-label {
+      font-size: 12px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
-    #manualRow button {
-      padding: 10px 14px;
-      border-radius: 6px;
-      border: none;
-      background: #1a73e8;
-      color: white;
+    .field-value {
+      font-size: 17px;
+      color: #1a1a1a;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+    #status {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+      display: none;
       font-weight: bold;
+    }
+    .error { background: #f8d7da; color: #721c24; }
+
+    /* Full-page loading overlay - blocks the app until the master list is ready */
+    #loadingOverlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #f5f7fa;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+    #loadingText {
+      font-size: 15px;
+      color: #555;
+      font-weight: bold;
+    }
+    #loadingSub {
+      font-size: 13px;
+      color: #999;
+      margin-top: 6px;
+    }
+    #mainContent {
+      display: none;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid #d0d7de;
+      border-top: 4px solid #1a73e8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
   </style>
 </head>
 <body>
-  <div id="videoWrap">
-    <video id="video" autoplay playsinline muted></video>
-    <div id="guideBox"></div>
-    <div id="tapMarker"></div>
+
+  <div id="loadingOverlay">
+    <div class="spinner"></div>
+    <div id="loadingText">Loading master list...</div>
+    <div id="loadingSub">Please wait a moment</div>
   </div>
 
-  <button id="startCameraBtn">Tap to Start Camera</button>
+  <div id="mainContent">
+    <h2>Product Check</h2>
 
-  <div class="topbar">
-    <span>Tap directly on the barcode</span>
-    <button id="cancelBtn">Cancel</button>
-  </div>
+    <label for="productCode">Product Code</label>
+    <div class="code-input-row">
+      <input type="text" id="productCode" placeholder="Scan or type code" autocomplete="off">
+      <button type="button" id="scanBtn" title="Scan barcode">📷 Scan</button>
+    </div>
+    <div class="scan-tip">Tip: opens a camera scanner in a new tab. Allow pop-ups if prompted.</div>
 
-  <div id="confirmBox">
-    <div class="label">Detected number</div>
-    <div class="value" id="confirmValue">-</div>
-    <div class="row">
-      <button id="confirmYes">Use this</button>
-      <button id="confirmNo">Try again</button>
+    <div class="btn-row">
+      <button id="checkBtn" onclick="checkProduct()">Check</button>
+      <button id="clearBtn" onclick="clearAll()">Clear</button>
+    </div>
+
+    <div id="status"></div>
+
+    <div id="result">
+      <div class="field">
+        <div class="field-label">Material</div>
+        <div class="field-value" id="r-material">-</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Description</div>
+        <div class="field-value" id="r-description">-</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Material Group</div>
+        <div class="field-value" id="r-materialGroup">-</div>
+      </div>
+      <div class="field">
+        <div class="field-label">UOM</div>
+        <div class="field-value" id="r-uom">-</div>
+      </div>
+      <div class="field">
+        <div class="field-label">EAN/UPC</div>
+        <div class="field-value" id="r-eanUpc">-</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Department</div>
+        <div class="field-value" id="r-department">-</div>
+      </div>
     </div>
   </div>
 
-  <div id="manualRow">
-    <input type="text" id="manualInput" placeholder="Type code manually">
-    <button id="manualBtn">Use</button>
-  </div>
-
-  <div id="status">Tap "Start Camera" to begin</div>
-
-  <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
-  <script src="https://unpkg.com/@zxing/browser@latest"></script>
   <script>
-    var video = document.getElementById('video');
-    var statusEl = document.getElementById('status');
-    var guideBox = document.getElementById('guideBox');
-    var tapMarker = document.getElementById('tapMarker');
-    var confirmBox = document.getElementById('confirmBox');
-    var confirmValue = document.getElementById('confirmValue');
-    var manualRow = document.getElementById('manualRow');
-    var startBtn = document.getElementById('startCameraBtn');
+    // ============================================================
+    // CONFIG - update this if you move the scanner page elsewhere
+    // ============================================================
+    var SCANNER_URL = 'https://itshbn-web.github.io/SHBN-SCANNER/';
 
-    var stream = null;
-    var track = null;
-    // Correct package: @zxing/browser (window.ZXingBrowser), not @zxing/library.
-    // @zxing/library alone does not expose decodeFromCanvas.
-    var zxingReader = new ZXingBrowser.BrowserMultiFormatReader();
-    var sent = false;
-    var busy = false; // prevents overlapping tap attempts
-    var tesseractLoadPromise = null;
-    var cameraTimeoutId = null;
+    // In-memory index built once after full scan
+    let productIndex = {}; // keyed by both material code and EAN/UPC
 
-    // ---------- Pre-flight checks (run immediately, before any tap) ----------
-    function preflightCheck() {
-      if (!window.isSecureContext) {
-        statusEl.textContent = 'This page must be loaded over HTTPS for camera access to work.';
-        startBtn.style.display = 'none';
-        manualRow.style.display = 'flex';
-        return false;
-      }
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        statusEl.textContent = 'This browser does not support camera access. Try Chrome, or type the code below.';
-        startBtn.style.display = 'none';
-        manualRow.style.display = 'flex';
-        return false;
-      }
-      return true;
-    }
-    var preflightOk = preflightCheck();
-
-    // ---------- Camera start (tied to a real tap - required by some browsers) ----------
-    startBtn.addEventListener('click', startCamera);
-
-    function startCamera() {
-      if (!preflightOk) return;
-      startBtn.style.display = 'none';
-      statusEl.textContent = 'Requesting camera access...';
-
-      cameraTimeoutId = setTimeout(function () {
-        statusEl.textContent = 'Camera is taking too long to respond on this browser. Try Chrome/Safari, or type the code below.';
-        manualRow.style.display = 'flex';
-        startBtn.style.display = 'block';
-        startBtn.textContent = 'Try Again';
-      }, 8000);
-
-      navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'environment',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        }
-      }).then(function (s) {
-        clearTimeout(cameraTimeoutId);
-        stream = s;
-        track = stream.getVideoTracks()[0];
-        video.srcObject = stream;
-        guideBox.style.display = 'block';
-        statusEl.textContent = 'Tap directly on the barcode';
-      }).catch(function (err) {
-        clearTimeout(cameraTimeoutId);
-        var reason = (err && err.name) ? err.name : 'unknown error';
-        var friendly = 'Camera error (' + reason + ').';
-        if (reason === 'NotAllowedError') {
-          friendly = 'Camera permission was denied. Check the site permissions (tap the icon next to the address bar) and allow camera access.';
-        } else if (reason === 'NotFoundError') {
-          friendly = 'No camera was found on this device.';
-        } else if (reason === 'NotReadableError') {
-          friendly = 'Camera is already in use by another app. Close other camera apps and try again.';
-        }
-        statusEl.textContent = friendly + ' You can type the code below instead.';
-        manualRow.style.display = 'flex';
-        startBtn.style.display = 'block';
-        startBtn.textContent = 'Try Again';
-      });
+    // Data was already requested at the very top of <head>, before this
+    // script even loaded. Hook into it here - handles both cases: the
+    // response arriving before or after this function is defined.
+    window.__onDataLoaded = onDataLoaded;
+    window.__onLoadError = onLoadError;
+    if (__dataReady) {
+      if (__productErr) onLoadError(__productErr); else onDataLoaded(__productData);
     }
 
-    // ---------- Tap-to-scan ----------
-    video.addEventListener('click', onTap);
-    video.addEventListener('touchend', function (e) {
-      e.preventDefault();
-      var t = e.changedTouches[0];
-      handleTapAt(t.clientX, t.clientY);
-    });
-
-    function onTap(e) {
-      handleTapAt(e.clientX, e.clientY);
-    }
-
-    function handleTapAt(clientX, clientY) {
-      if (busy || sent || !stream || !video.videoWidth) return;
-      busy = true;
-
-      var rect = video.getBoundingClientRect();
-      var tapX = clientX - rect.left;
-      var tapY = clientY - rect.top;
-
-      tapMarker.style.left = tapX + 'px';
-      tapMarker.style.top = tapY + 'px';
-      tapMarker.style.display = 'block';
-      tapMarker.style.animation = 'none';
-      void tapMarker.offsetWidth;
-      tapMarker.style.animation = 'pulse 0.6s ease-out';
-
-      var scale = Math.max(rect.width / video.videoWidth, rect.height / video.videoHeight);
-      var displayedW = video.videoWidth * scale;
-      var displayedH = video.videoHeight * scale;
-      var offsetX = (displayedW - rect.width) / 2;
-      var offsetY = (displayedH - rect.height) / 2;
-      var videoX = (tapX + offsetX) / scale;
-      var videoY = (tapY + offsetY) / scale;
-
-      tryFocusAt(videoX / video.videoWidth, videoY / video.videoHeight);
-
-      var cropW = Math.min(video.videoWidth * 0.55, video.videoWidth);
-      var cropH = Math.min(video.videoHeight * 0.30, video.videoHeight);
-      var cropX = clamp(videoX - cropW / 2, 0, video.videoWidth - cropW);
-      var cropY = clamp(videoY - cropH / 2, 0, video.videoHeight - cropH);
-
-      statusEl.textContent = 'Reading...';
-      attemptDecode({ x: cropX, y: cropY, w: cropW, h: cropH }, 0);
-    }
-
-    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-
-    function tryFocusAt(nx, ny) {
-      if (!track || !track.getCapabilities) return;
-      try {
-        var caps = track.getCapabilities();
-        if (caps.pointsOfInterest) {
-          track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x: nx, y: ny }] }] }).catch(function () {});
-        } else if (caps.focusMode && caps.focusMode.indexOf('continuous') !== -1) {
-          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function () {});
-        }
-      } catch (e) { /* ignore - best effort only */ }
-    }
-
-    // ---------- Crop capture ----------
-    function captureCrop(box) {
-      var canvas = document.createElement('canvas');
-      canvas.width = box.w;
-      canvas.height = box.h;
-      var ctx = canvas.getContext('2d');
-      ctx.drawImage(video, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
-      return canvas;
-    }
-
-    // ---------- Barcode decode: native detector -> ZXing (canvas, async) -> OCR fallback ----------
-    var MAX_BARCODE_ATTEMPTS = 2;
-    var ATTEMPT_DELAY = 120; // just enough for autofocus to catch up
-
-    function attemptDecode(box, attemptNum) {
-      var canvas = captureCrop(box);
-
-      // Fast path: native ML-based detector (Android Chrome).
-      tryNativeDetector(canvas)
-        .then(finishSuccess)
-        .catch(function () {
-          // Fallback: ZXing via @zxing/browser, decoding directly from
-          // the canvas. decodeFromCanvas returns a Promise - must be
-          // chained with .then/.catch, not wrapped in try/catch.
-          zxingReader.decodeFromCanvas(canvas)
-            .then(function (result) {
-              finishSuccess(result.getText());
-            })
-            .catch(function () {
-              if (attemptNum + 1 < MAX_BARCODE_ATTEMPTS) {
-                setTimeout(function () { attemptDecode(box, attemptNum + 1); }, ATTEMPT_DELAY);
-              } else {
-                statusEl.textContent = 'Trying text recognition...';
-                runOcrFallback(box);
-              }
-            });
-        });
-    }
-
-    function tryNativeDetector(canvas) {
-      if (!('BarcodeDetector' in window)) return Promise.reject('unsupported');
-      var detector = new BarcodeDetector({
-        formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code']
-      });
-      return detector.detect(canvas).then(function (codes) {
-        if (codes && codes.length > 0) return codes[0].rawValue;
-        throw new Error('no barcode found');
-      });
-    }
-
-    function runOcrFallback(box) {
-      loadTesseract().then(function () {
-        var textBox = {
-          x: box.x,
-          y: box.y + box.h * 0.55,
-          w: box.w,
-          h: box.h * 0.45
+    function onDataLoaded(products) {
+      products.forEach(row => {
+        const p = {
+          material: row[0],
+          description: row[1],
+          materialGroup: row[2],
+          uom: row[3],
+          eanUpc: row[4],
+          department: row[5]
         };
-        var canvas = captureCrop(textBox);
-
-        Tesseract.recognize(canvas, 'eng', {
-          tessedit_char_whitelist: '0123456789'
-        }).then(function (result) {
-          var raw = (result && result.data && result.data.text) || '';
-          var candidate = extractValidCode(raw);
-          if (candidate) {
-            offerConfirmation(candidate);
-          } else {
-            giveUpThisTap();
-          }
-        }).catch(function () {
-          giveUpThisTap();
-        });
-      }).catch(function () {
-        giveUpThisTap();
+        if (p.material) productIndex[p.material] = p;
+        if (p.eanUpc) productIndex[p.eanUpc] = p;
       });
+
+      document.getElementById('loadingOverlay').style.display = 'none';
+      document.getElementById('mainContent').style.display = 'block';
+      document.getElementById('productCode').focus();
     }
 
-    function loadTesseract() {
-      if (typeof Tesseract !== 'undefined') return Promise.resolve();
-      if (tesseractLoadPromise) return tesseractLoadPromise;
-      tesseractLoadPromise = new Promise(function (resolve, reject) {
-        var s = document.createElement('script');
-        s.src = 'https://unpkg.com/tesseract.js@5/dist/tesseract.min.js';
-        s.onload = resolve;
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-      return tesseractLoadPromise;
+    function onLoadError(err) {
+      document.getElementById('loadingText').textContent = 'Failed to load data';
+      document.getElementById('loadingSub').textContent = err && err.message ? err.message : 'Unknown error';
     }
 
-    function giveUpThisTap() {
-      busy = false;
-      statusEl.textContent = 'Could not read that spot - try tapping again';
-    }
-
-    // ---------- Digit validation (EAN-13 / UPC-A / EAN-8 check digit) ----------
-    function isValidEAN13(code) {
-      if (!/^\d{13}$/.test(code)) return false;
-      var sum = 0;
-      for (var i = 0; i < 12; i++) sum += Number(code[i]) * (i % 2 === 0 ? 1 : 3);
-      return ((10 - (sum % 10)) % 10) === Number(code[12]);
-    }
-    function isValidUPCA(code) {
-      if (!/^\d{12}$/.test(code)) return false;
-      var sum = 0;
-      for (var i = 0; i < 11; i++) sum += Number(code[i]) * (i % 2 === 0 ? 3 : 1);
-      return ((10 - (sum % 10)) % 10) === Number(code[11]);
-    }
-    function isValidEAN8(code) {
-      if (!/^\d{8}$/.test(code)) return false;
-      var sum = 0;
-      for (var i = 0; i < 7; i++) sum += Number(code[i]) * (i % 2 === 0 ? 3 : 1);
-      return ((10 - (sum % 10)) % 10) === Number(code[7]);
-    }
-
-    function extractValidCode(rawText) {
-      var digitRuns = rawText.match(/\d{8,13}/g) || [];
-      for (var i = 0; i < digitRuns.length; i++) {
-        var run = digitRuns[i];
-        var lens = [13, 12, 8];
-        for (var j = 0; j < lens.length; j++) {
-          var len = lens[j];
-          if (run.length < len) continue;
-          for (var start = 0; start + len <= run.length; start++) {
-            var candidate = run.substr(start, len);
-            if (len === 13 && isValidEAN13(candidate)) return candidate;
-            if (len === 12 && isValidUPCA(candidate)) return candidate;
-            if (len === 8 && isValidEAN8(candidate)) return candidate;
-          }
-        }
+    const codeInput = document.getElementById('productCode');
+    codeInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        checkProduct();
       }
-      return null;
-    }
-
-    // ---------- Confirmation UI for OCR results ----------
-    function offerConfirmation(code) {
-      busy = false;
-      statusEl.textContent = '';
-      confirmValue.textContent = code;
-      confirmBox.style.display = 'block';
-
-      document.getElementById('confirmYes').onclick = function () {
-        confirmBox.style.display = 'none';
-        finishSuccess(code);
-      };
-      document.getElementById('confirmNo').onclick = function () {
-        confirmBox.style.display = 'none';
-        statusEl.textContent = 'Tap directly on the barcode';
-      };
-    }
-
-    // ---------- Send result back to opener ----------
-    function finishSuccess(code) {
-      if (sent) return;
-      sent = true;
-      if (window.opener) {
-        window.opener.postMessage({ type: 'barcode-result', code: code }, '*');
-      }
-      stopAndClose();
-    }
-
-    function stopAndClose() {
-      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
-      window.close();
-      statusEl.textContent = 'Done. You can close this tab and return to the app.';
-    }
-
-    document.getElementById('cancelBtn').addEventListener('click', function () {
-      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
-      window.close();
     });
 
-    document.getElementById('manualBtn').addEventListener('click', function () {
-      var val = document.getElementById('manualInput').value.trim();
-      if (val) finishSuccess(val);
+    function checkProduct() {
+      const code = codeInput.value.trim();
+      const status = document.getElementById('status');
+      const result = document.getElementById('result');
+
+      if (!__dataReady) {
+        status.style.display = 'block';
+        status.className = 'error';
+        status.textContent = 'Still loading master list, please wait a moment...';
+        result.style.display = 'none';
+        return;
+      }
+
+      if (!code) {
+        status.style.display = 'block';
+        status.className = 'error';
+        status.textContent = '✗ Please enter or scan a code.';
+        result.style.display = 'none';
+        return;
+      }
+
+      const match = productIndex[code];
+
+      if (match) {
+        status.style.display = 'none';
+        result.style.display = 'block';
+        document.getElementById('r-material').textContent = match.material;
+        document.getElementById('r-description').textContent = match.description;
+        document.getElementById('r-materialGroup').textContent = match.materialGroup;
+        document.getElementById('r-uom').textContent = match.uom;
+        document.getElementById('r-eanUpc').textContent = match.eanUpc;
+        document.getElementById('r-department').textContent = match.department;
+      } else {
+        result.style.display = 'none';
+        status.style.display = 'block';
+        status.className = 'error';
+        status.textContent = '✗ No match found for "' + code + '".';
+      }
+    }
+
+    function clearAll() {
+      codeInput.value = '';
+      document.getElementById('result').style.display = 'none';
+      document.getElementById('status').style.display = 'none';
+      codeInput.focus();
+    }
+
+    // ---------- Barcode scanner (standalone live-camera tab) ----------
+    // Apps Script's HtmlService sandboxes this page inside a cross-origin
+    // iframe that Google controls, which blocks getUserMedia() (live
+    // camera streaming) from ever prompting for permission - this is a
+    // platform restriction, not something fixable from app code. Instead,
+    // "Scan" opens a separate, unsandboxed page (hosted outside Apps
+    // Script) that runs the live scanner, then posts the decoded code
+    // back to this window.
+    document.getElementById('scanBtn').addEventListener('click', function () {
+      var scannerWindow = window.open(SCANNER_URL, 'barcodeScanner');
+      if (!scannerWindow) {
+        alert('Please allow pop-ups for this site to use the camera scanner.');
+      }
+    });
+
+    window.addEventListener('message', function (e) {
+      if (e.data && e.data.type === 'barcode-result' && e.data.code) {
+        codeInput.value = e.data.code;
+        checkProduct();
+      }
     });
   </script>
 </body>
