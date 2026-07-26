@@ -1,327 +1,151 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <base target="_top">
-  <script>
-    // Fire this the instant the page starts parsing - before any CSS or
-    // other scripts load - so the server round-trip starts as early as
-    // physically possible instead of waiting for the rest of the page.
-    var __productData = null, __productErr = null, __dataReady = false;
-    google.script.run
-      .withSuccessHandler(function (products) { __productData = products; __dataReady = true; if (window.__onDataLoaded) window.__onDataLoaded(products); })
-      .withFailureHandler(function (err) { __productErr = err; __dataReady = true; if (window.__onLoadError) window.__onLoadError(err); })
-      .getAllProducts();
-  </script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Barcode Scanner</title>
   <style>
     body {
+      margin: 0;
+      background: #000;
       font-family: Arial, sans-serif;
-      max-width: 440px;
-      margin: 0 auto;
-      padding: 24px 16px;
-      background: #f5f7fa;
-    }
-    h2 { text-align: center; color: #1a1a1a; }
-    label {
-      display: block;
-      margin-top: 16px;
-      font-weight: bold;
-      font-size: 14px;
-      color: #333;
-    }
-    input {
-      width: 100%;
-      padding: 12px;
-      font-size: 16px;
-      margin-top: 6px;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      box-sizing: border-box;
-    }
-    input:disabled { background: #eee; }
-
-    .code-input-row {
-      display: flex;
-      gap: 8px;
-      align-items: flex-start;
-    }
-    .code-input-row input { flex: 1; margin-top: 6px; }
-    .scan-tip {
-      font-size: 11.5px;
-      color: #888;
-      margin-top: 6px;
-    }
-    #scanBtn {
-      flex-shrink: 0;
-      margin-top: 6px;
-      padding: 12px 14px;
-      font-size: 14px;
-      font-weight: bold;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      background: #1a73e8;
-      color: white;
-      white-space: nowrap;
-    }
-    #scanBtn:hover { opacity: 0.9; }
-
-    .btn-row {
-      display: flex;
-      gap: 10px;
-      margin-top: 20px;
-    }
-    button {
-      flex: 1;
-      padding: 14px;
-      font-size: 16px;
-      font-weight: bold;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-    #checkBtn { background: #1a73e8; color: white; }
-    #checkBtn:disabled { background: #a0a0a0; }
-    #clearBtn { background: #e0e0e0; color: #333; }
-
-    #result {
-      margin-top: 24px;
-      background: white;
-      border-radius: 10px;
-      padding: 16px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-      display: none;
-    }
-    .field { margin-bottom: 12px; }
-    .field-label {
-      font-size: 12px;
-      color: #888;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .field-value {
-      font-size: 17px;
-      color: #1a1a1a;
-      font-weight: 600;
-      margin-top: 2px;
-    }
-    #status {
-      margin-top: 16px;
-      padding: 12px;
-      border-radius: 8px;
-      text-align: center;
-      display: none;
-      font-weight: bold;
-    }
-    .error { background: #f8d7da; color: #721c24; }
-
-    /* Full-page loading overlay - blocks the app until the master list is ready */
-    #loadingOverlay {
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: #f5f7fa;
+      height: 100vh;
       display: flex;
       flex-direction: column;
+    }
+    #reader { flex: 1; }
+    #reader video { object-fit: cover; }
+    .topbar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      padding: 14px 16px;
+      display: flex;
+      justify-content: space-between;
       align-items: center;
-      justify-content: center;
-      z-index: 999;
+      z-index: 10;
+      background: linear-gradient(rgba(0,0,0,0.6), transparent);
     }
-    #loadingText {
-      font-size: 15px;
-      color: #555;
-      font-weight: bold;
-    }
-    #loadingSub {
+    .topbar span { color: white; font-size: 14px; font-weight: bold; }
+    #cancelBtn {
+      background: rgba(255,255,255,0.15);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.4);
+      border-radius: 6px;
+      padding: 8px 14px;
       font-size: 13px;
-      color: #999;
-      margin-top: 6px;
     }
-    #mainContent {
+    #status {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      padding: 18px 16px 26px;
+      text-align: center;
+      color: white;
+      font-size: 14px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.7));
+      z-index: 10;
+      min-height: 20px;
+    }
+    #manualRow {
       display: none;
+      position: absolute;
+      bottom: 60px; left: 16px; right: 16px;
+      z-index: 11;
+      gap: 8px;
     }
-    .spinner {
-      width: 40px;
-      height: 40px;
-      border: 4px solid #d0d7de;
-      border-top: 4px solid #1a73e8;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin-bottom: 16px;
+    #manualRow input {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
     }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
+    #manualRow button {
+      padding: 10px 14px;
+      border-radius: 6px;
+      border: none;
+      background: #1a73e8;
+      color: white;
+      font-weight: bold;
     }
   </style>
 </head>
 <body>
-
-  <div id="loadingOverlay">
-    <div class="spinner"></div>
-    <div id="loadingText">Loading master list...</div>
-    <div id="loadingSub">Please wait a moment</div>
+  <div class="topbar">
+    <span>Point camera at barcode</span>
+    <button id="cancelBtn">Cancel</button>
   </div>
-
-  <div id="mainContent">
-    <h2>Product Check</h2>
-
-    <label for="productCode">Product Code</label>
-    <div class="code-input-row">
-      <input type="text" id="productCode" placeholder="Scan or type code" autocomplete="off">
-      <button type="button" id="scanBtn" title="Scan barcode">📷 Scan</button>
-    </div>
-    <div class="scan-tip">Tip: opens a camera scanner in a new tab. Allow pop-ups if prompted.</div>
-
-    <div class="btn-row">
-      <button id="checkBtn" onclick="checkProduct()">Check</button>
-      <button id="clearBtn" onclick="clearAll()">Clear</button>
-    </div>
-
-    <div id="status"></div>
-
-    <div id="result">
-      <div class="field">
-        <div class="field-label">Material</div>
-        <div class="field-value" id="r-material">-</div>
-      </div>
-      <div class="field">
-        <div class="field-label">Description</div>
-        <div class="field-value" id="r-description">-</div>
-      </div>
-      <div class="field">
-        <div class="field-label">Material Group</div>
-        <div class="field-value" id="r-materialGroup">-</div>
-      </div>
-      <div class="field">
-        <div class="field-label">UOM</div>
-        <div class="field-value" id="r-uom">-</div>
-      </div>
-      <div class="field">
-        <div class="field-label">EAN/UPC</div>
-        <div class="field-value" id="r-eanUpc">-</div>
-      </div>
-      <div class="field">
-        <div class="field-label">Department</div>
-        <div class="field-value" id="r-department">-</div>
-      </div>
-    </div>
+  <div id="reader"></div>
+  <div id="manualRow">
+    <input type="text" id="manualInput" placeholder="Type code manually">
+    <button id="manualBtn">Use</button>
   </div>
+  <div id="status">Starting camera...</div>
 
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script>
-    // ============================================================
-    // CONFIG - update this if you move the scanner page elsewhere
-    // ============================================================
-    var SCANNER_URL = 'https://itshbn-web.github.io/SHBN-SCANNER/';
+    var statusEl = document.getElementById('status');
+    var html5QrCode = new Html5Qrcode('reader');
+    var sent = false;
 
-    // In-memory index built once after full scan
-    let productIndex = {}; // keyed by both material code and EAN/UPC
-
-    // Data was already requested at the very top of <head>, before this
-    // script even loaded. Hook into it here - handles both cases: the
-    // response arriving before or after this function is defined.
-    window.__onDataLoaded = onDataLoaded;
-    window.__onLoadError = onLoadError;
-    if (__dataReady) {
-      if (__productErr) onLoadError(__productErr); else onDataLoaded(__productData);
+    function sendResult(code) {
+      if (sent) return;
+      sent = true;
+      if (window.opener) {
+        window.opener.postMessage({ type: 'barcode-result', code: code }, '*');
+      }
+      stopAndClose();
     }
 
-    function onDataLoaded(products) {
-      products.forEach(row => {
-        const p = {
-          material: row[0],
-          description: row[1],
-          materialGroup: row[2],
-          uom: row[3],
-          eanUpc: row[4],
-          department: row[5]
-        };
-        if (p.material) productIndex[p.material] = p;
-        if (p.eanUpc) productIndex[p.eanUpc] = p;
+    function stopAndClose() {
+      html5QrCode.stop().catch(function () {}).then(function () {
+        window.close();
+        // Some mobile browsers block window.close() on tabs not opened
+        // purely by script in certain contexts - show a manual fallback.
+        statusEl.textContent = 'Done. You can close this tab and return to the app.';
+      });
+    }
+
+    function onScanSuccess(decodedText) {
+      sendResult(decodedText.trim());
+    }
+
+    function onScanFailure() {
+      // fires continuously while no code is found - intentionally silent
+    }
+
+    var config = {
+      fps: 10,
+      qrbox: function (viewfinderWidth, viewfinderHeight) {
+        var size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.7);
+        return { width: size, height: Math.floor(size * 0.5) }; // wide box suits 1D barcodes
+      },
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.QR_CODE
+      ]
+    };
+
+    html5QrCode.start({ facingMode: 'environment' }, config, onScanSuccess, onScanFailure)
+      .then(function () {
+        statusEl.textContent = 'Hold the barcode steady inside the box';
+      })
+      .catch(function (err) {
+        statusEl.textContent = 'Camera unavailable. Type the code below instead.';
+        document.getElementById('manualRow').style.display = 'flex';
       });
 
-      document.getElementById('loadingOverlay').style.display = 'none';
-      document.getElementById('mainContent').style.display = 'block';
-      document.getElementById('productCode').focus();
-    }
-
-    function onLoadError(err) {
-      document.getElementById('loadingText').textContent = 'Failed to load data';
-      document.getElementById('loadingSub').textContent = err && err.message ? err.message : 'Unknown error';
-    }
-
-    const codeInput = document.getElementById('productCode');
-    codeInput.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        checkProduct();
-      }
+    document.getElementById('cancelBtn').addEventListener('click', function () {
+      html5QrCode.stop().catch(function () {}).then(function () { window.close(); });
     });
 
-    function checkProduct() {
-      const code = codeInput.value.trim();
-      const status = document.getElementById('status');
-      const result = document.getElementById('result');
-
-      if (!__dataReady) {
-        status.style.display = 'block';
-        status.className = 'error';
-        status.textContent = 'Still loading master list, please wait a moment...';
-        result.style.display = 'none';
-        return;
-      }
-
-      if (!code) {
-        status.style.display = 'block';
-        status.className = 'error';
-        status.textContent = '✗ Please enter or scan a code.';
-        result.style.display = 'none';
-        return;
-      }
-
-      const match = productIndex[code];
-
-      if (match) {
-        status.style.display = 'none';
-        result.style.display = 'block';
-        document.getElementById('r-material').textContent = match.material;
-        document.getElementById('r-description').textContent = match.description;
-        document.getElementById('r-materialGroup').textContent = match.materialGroup;
-        document.getElementById('r-uom').textContent = match.uom;
-        document.getElementById('r-eanUpc').textContent = match.eanUpc;
-        document.getElementById('r-department').textContent = match.department;
-      } else {
-        result.style.display = 'none';
-        status.style.display = 'block';
-        status.className = 'error';
-        status.textContent = '✗ No match found for "' + code + '".';
-      }
-    }
-
-    function clearAll() {
-      codeInput.value = '';
-      document.getElementById('result').style.display = 'none';
-      document.getElementById('status').style.display = 'none';
-      codeInput.focus();
-    }
-
-    // ---------- Barcode scanner (standalone live-camera tab) ----------
-    // Apps Script's HtmlService sandboxes this page inside a cross-origin
-    // iframe that Google controls, which blocks getUserMedia() (live
-    // camera streaming) from ever prompting for permission - this is a
-    // platform restriction, not something fixable from app code. Instead,
-    // "Scan" opens a separate, unsandboxed page (hosted outside Apps
-    // Script) that runs the live scanner, then posts the decoded code
-    // back to this window.
-    document.getElementById('scanBtn').addEventListener('click', function () {
-      var scannerWindow = window.open(SCANNER_URL, 'barcodeScanner');
-      if (!scannerWindow) {
-        alert('Please allow pop-ups for this site to use the camera scanner.');
-      }
-    });
-
-    window.addEventListener('message', function (e) {
-      if (e.data && e.data.type === 'barcode-result' && e.data.code) {
-        codeInput.value = e.data.code;
-        checkProduct();
-      }
+    document.getElementById('manualBtn').addEventListener('click', function () {
+      var val = document.getElementById('manualInput').value.trim();
+      if (val) sendResult(val);
     });
   </script>
 </body>
